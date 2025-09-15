@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Crypto News Queue</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .card { border: 1px solid #ddd; padding: 15px; margin: 10px 0; border-radius: 8px; }
+        textarea { width: 100%; height: 80px; margin: 5px 0; }
+        button { padding: 10px 15px; margin: 5px; border: none; border-radius: 5px; cursor: pointer; }
+        .save { background: #4CAF50; color: white; }
+        .approve { background: #2196F3; color: white; }
+        .decline { background: #f44336; color: white; }
+        .copy { background: #ff9800; color: white; }
+        img { max-width: 100%; height: auto; }
+    </style>
+</head>
+<body>
+    <h1>📰 Crypto News Queue</h1>
+    <div id="news-list"></div>
+
+    <script>
+        // ===== CẤU HÌNH =====
+        const GITHUB_USER = 'TEN_GITHUB_CUA_BAN';  // Thay đổi
+        const GITHUB_REPO = 'crypto-news-queue';   // Thay đổi nếu cần
+        const N8N_WEBHOOK_BASE = 'https://N8N_URL_CUA_BAN/webhook';  // Thay đổi
+        
+        const QUEUE_URL = `https://raw.githubusercontent.com/${GITHUB_USER}/${GITHUB_REPO}/main/data/queue.json`;
+        const WEBHOOKS = {
+            save: `${N8N_WEBHOOK_BASE}/save`,
+            approve: `${N8N_WEBHOOK_BASE}/approve`,
+            decline: `${N8N_WEBHOOK_BASE}/decline`
+        };
+
+        let newsData = [];
+
+        // Load dữ liệu từ GitHub
+        async function loadNews() {
+            try {
+                const response = await fetch(QUEUE_URL + '?t=' + Date.now());
+                newsData = await response.json();
+                displayNews();
+            } catch (error) {
+                console.error('Lỗi load dữ liệu:', error);
+                document.getElementById('news-list').innerHTML = '<p>Không thể load dữ liệu</p>';
+            }
+        }
+
+        // Hiển thị danh sách tin tức
+        function displayNews() {
+            const container = document.getElementById('news-list');
+            const pendingNews = newsData.filter(item => item.status === 'pending' || item.status === 'saved');
+            
+            if (pendingNews.length === 0) {
+                container.innerHTML = '<p>Không có tin tức nào đang chờ duyệt</p>';
+                return;
+            }
+
+            container.innerHTML = pendingNews.map(item => `
+                <div class="card">
+                    <h3>${item.title || 'Không có tiêu đề'}</h3>
+                    <p><strong>Nguồn:</strong> ${item.source || 'Unknown'}</p>
+                    <p><strong>Link:</strong> <a href="${item.link}" target="_blank">Mở bài viết</a></p>
+                    
+                    ${item.image_url ? `
+                        <img src="${item.image_url}" alt="Ảnh bài viết">
+                        <button class="copy" onclick="copyToClipboard('${item.image_url}')">Copy ảnh URL</button>
+                    ` : ''}
+                    
+                    <div>
+                        <label>Bài viết cho X (Twitter):</label>
+                        <textarea id="x-${item.id}" placeholder="Nội dung cho X...">${item.x_text || ''}</textarea>
+                        <button class="copy" onclick="copyToClipboard(document.getElementById('x-${item.id}').value)">Copy X</button>
+                    </div>
+                    
+                    <div>
+                        <label>Bài viết cho CMC:</label>
+                        <textarea id="cmc-${item.id}" placeholder="Nội dung cho CMC...">${item.cmc_text || ''}</textarea>
+                        <button class="copy" onclick="copyToClipboard(document.getElementById('cmc-${item.id}').value)">Copy CMC</button>
+                    </div>
+                    
+                    ${!item.image_url ? `
+                        <div>
+                            <label>Prompt tạo ảnh:</label>
+                            <textarea id="prompt-${item.id}" placeholder="Mô tả ảnh cần tạo...">${item.image_prompt || ''}</textarea>
+                            <button class="copy" onclick="copyToClipboard(document.getElementById('prompt-${item.id}').value)">Copy Prompt</button>
+                        </div>
+                    ` : ''}
+                    
+                    <div>
+                        <button class="save" onclick="saveItem('${item.id}')">💾 Save</button>
+                        <button class="approve" onclick="approveItem('${item.id}')">✅ Approve & Post X</button>
+                        <button class="decline" onclick="declineItem('${item.id}')">❌ Decline</button>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        // Copy text to clipboard
+        function copyToClipboard(text) {
+            navigator.clipboard.writeText(text).then(() => {
+                alert('Đã copy!');
+            });
+        }
+
+        // Gửi webhook
+        async function sendWebhook(type, itemId) {
+            const item = newsData.find(i => i.id === itemId);
+            if (!item) return;
+
+            const payload = {
+                id: itemId,
+                x_text: document.getElementById(`x-${itemId}`)?.value || item.x_text,
+                cmc_text: document.getElementById(`cmc-${itemId}`)?.value || item.cmc_text,
+                image_prompt: document.getElementById(`prompt-${itemId}`)?.value || item.image_prompt
+            };
+
+            try {
+                const response = await fetch(WEBHOOKS[type], {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+
+                if (response.ok) {
+                    alert(`${type.toUpperCase()} thành công!`);
+                    loadNews(); // Reload dữ liệu
+                } else {
+                    alert(`Lỗi ${type}: ${response.status}`);
+                }
+            } catch (error) {
+                alert(`Lỗi kết nối: ${error.message}`);
+            }
+        }
+
+        // Các hàm xử lý
+        function saveItem(id) { sendWebhook('save', id); }
+        function approveItem(id) { sendWebhook('approve', id); }
+        function declineItem(id) { sendWebhook('decline', id); }
+
+        // Load dữ liệu khi trang load
+        loadNews();
+    </script>
+</body>
+</html>
